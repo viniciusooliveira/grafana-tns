@@ -1,0 +1,65 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+exporters:
+  logging:
+    loglevel: debug
+
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: promexample
+
+  otlp:
+    endpoint: tempo:55680
+    tls:
+      insecure: true
+  
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+    tenant_id: "example"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 10s
+      max_interval: 60s
+      max_elapsed_time: 10m
+    labels:
+      resource:
+        resource.name: "resource_name"
+        severity: "severity"
+        service.name: "service_name"
+      attributes:
+      # Allowing 'severity' attribute and not providing a mapping, since the attribute name is a valid Loki label name.
+        severity: ""
+        http.status_code: "http_status_code" 
+        http.host: "http_host"
+        http.url: "http_url"
+        http.user_agent: "http_user_agent"
+        resource.name: "resource_name"
+        severity: "severity"
+        service.name: "service_name"
+
+processors:
+  batch:
+
+extensions:
+  health_check:
+  pprof:
+    endpoint: :1888
+  zpages:
+    endpoint: :55679
+
+service:
+  extensions: [pprof, zpages, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging, otlp]
+    metrics:
+      receivers: [otlp]
+      exporters: [logging, prometheus]
+    logs:
+      receivers: [otlp]
+      exporters: [logging, loki]
