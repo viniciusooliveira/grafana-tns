@@ -1,0 +1,134 @@
+version: '3.9'
+services:
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./grafana/dashboards:/etc/grafana/dashboards
+    environment:
+     - GF_AUTH_ANONYMOUS_ENABLED=true
+     - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+     - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+     - 0.0.0.0:3000:3000
+    labels:
+      namespace: monitoring
+    networks:
+      - tns
+
+  prometheus:
+    image: prom/prometheus
+    user: root
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1d
+      - --enable-feature=exemplar-storage
+      - --log.level=debug
+      - --web.enable-admin-api
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+    # links:
+    #   - collector
+      # - app
+      # - db
+      # - loadgen
+    ports:
+      - 0.0.0.0:9090:9090
+    labels:
+      namespace: monitoring
+    networks:
+      - tns
+
+  # cadvisor:
+  #   image: gcr.io/cadvisor/cadvisor
+  #   container_name: cadvisor
+  #   ports:
+  #     - 8080:8080
+  #   volumes:
+  #     - /:/rootfs:ro
+  #     - /var/run:/var/run:rw
+  #     - /sys:/sys:ro
+  #     - /var/lib/docker/:/var/lib/docker:ro
+  #   labels:
+  #     namespace: monitoring
+
+  # node_exporter:
+  #   image: prom/node-exporter
+  #   container_name: node_exporter
+  #   volumes:
+  #     - /proc:/host/proc:ro
+  #     - /sys:/host/sys:ro
+  #     - /:/rootfs:ro
+  #   command:
+  #     - '--path.procfs=/host/proc'
+  #     - '--path.rootfs=/rootfs'
+  #     - '--path.sysfs=/host/sys'
+  #     - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+  #   labels:
+  #     namespace: monitoring
+
+  loki:
+    image: grafana/loki
+    command:
+      - -config.file=/etc/loki/local-config.yaml
+      - -table-manager.retention-period=1d
+      - -table-manager.retention-deletes-enabled=true
+    ports:
+      - "3100:3100"
+    labels:
+      namespace: monitoring
+    networks:
+      - tns
+
+  tempo:
+    image: grafana/tempo
+    command:
+      - --target=all
+      - --storage.trace.backend=local
+      - --storage.trace.local.path=/var/tempo
+      - --auth.enabled=false
+      - --compactor.compaction.block-retention=24h
+    ports:
+      - "8004:80"
+    labels:
+      namespace: monitoring
+    networks:
+      - tns
+
+  collector:
+    image: otel/opentelemetry-collector-contrib
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./collector/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "1888:1888"   # pprof extension
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+      - "8889:8889"   # Prometheus exporter metrics
+      - "13133:13133" # health_check extension
+      - "4317:4317"        # OTLP gRPC receiver
+      - "55670:55679" # zpages extension
+    depends_on:
+      - loki
+      - tempo
+    networks:
+      - tns
+
+  app:
+    build: ./OtelApp/OtelApp/
+    ports:
+      - "5001:5001"
+    depends_on: 
+      - collector
+    environment: 
+      - ASPNETCORE_URLS=http://0.0.0.0:5001
+      - ASPNETCORE_ENVIRONMENT=Development
+    networks: 
+      - tns
+
+networks:
+  tns:
+    # Use a custom driver
+    driver: bridge
